@@ -7,7 +7,7 @@ from model import Encoder, Decoder
 
 # 1. Load Data
 print("<<<< Loading Data >>>>")
-dialog_list = Dialog.resolve_data("./data/movie_conversations.txt", "./data/movie_lines.txt", vocab_size=800)
+dialog_list = Dialog.resolve_data("./data/movie_conversations.txt", "./data/movie_lines.txt", vocab_size=2500)
 Dialog.load_word2ids()
 dialog_x, dialog_y = Dialog.pair_qa_ids(dialog_list)
 data_X = tf.data.Dataset.from_tensor_slices(dialog_x)
@@ -21,11 +21,11 @@ print("<<<< Specifying Hyper Parameters >>>>")
 embedding_dim = 32
 vocab_size = len(Dialog.all_tokens) + 4
 sequence_len = Dialog.max_dialog_len
-batch_size = 128
+batch_size = 32
 hidden_units = 64
 epoch = 3000
 save_interval = 10
-learning_rate = 0.0005
+learning_rate = 0.005
 
 data_set = tf.data.Dataset.zip((data_X, data_Y, data_Y_shifted))
 data_set = data_set.shuffle(buffer_size=len(dialog_x)).batch(batch_size, drop_remainder=True)

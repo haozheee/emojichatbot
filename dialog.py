@@ -8,7 +8,7 @@ class Dialog:
     all_text = []  # used for obtaining frequency distribution
     word_id_dict = {}
     lemon = None    # it is the lemmatizer
-    read_len = 1400  # -1 to read until ends
+    read_len = 500  # -1 to read until ends
     freq_dist = None
     vocab_size = 800
     contractions = {
