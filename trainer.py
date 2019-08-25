@@ -19,7 +19,7 @@ print("Amount of observations: " + str(len(dialog_x)))
 print("<<<< Specifying Hyper Parameters >>>>")
 # the data should not change the parameters significantly, so we are not saving it locally
 embedding_dim = 32
-vocab_size = len(Dialog.all_tokens) + 2
+vocab_size = len(Dialog.all_tokens) + 3
 sequence_len = Dialog.max_dialog_len
 batch_size = 32
 encoder_hidden_size = 64
@@ -73,6 +73,13 @@ try:
 except Exception:
     print("No previous savings found. Start new training.....")
 
+with tf.Graph().as_default():
+    print('2, executing_eagerly: {}'.format(tf.executing_eagerly()))
+
+
+logdir = 'logs/func/'
+writer = tf.summary.create_file_writer(logdir)
+tf.summary.trace_on(graph=True, profiler=True)
 
 def train(encoder_input, decoder_input, decoder_target):
     loss = 0.0
@@ -81,17 +88,19 @@ def train(encoder_input, decoder_input, decoder_target):
         decoder_predict = decoder(inputs=decoder_input, initial_state=enc_hidden, encoder_output=enc_output)
         decoder_target = tf.one_hot(decoder_target, vocab_size, axis=-1)
         decoder_predict = tf.cast(decoder_predict, tf.dtypes.float32)
-        print("Target:  ")
-        print(decoder_target)
-        print("Predict:  ")
-        print(decoder_predict)
+        #print("Target:  ")
+        #print(decoder_target)
+        #print("Predict:  ")
+        #print(decoder_predict)
         decoder_target = tf.cast(decoder_target, tf.dtypes.float32)
         loss += cross_entropy(y_true=decoder_target, y_pred=decoder_predict)
-        print(loss)
+        print("loss:")
+        print(loss.numpy())
         # print("... batch cross entropy loss: " + str(loss.numpy()))
         variables = encoder.trainable_variables + decoder.trainable_variables + decoder.attention.trainable_variables
+        # print(variables)
         gradients = tape.gradient(loss, variables)
-        optimizer.apply_gradients(zip(gradients, variables))
+        #optimizer.apply_gradients(zip(gradients, variables))
     return loss.numpy()
 
 
@@ -119,6 +128,11 @@ def predict(input_string):
 # 4. Run Model
 print("<<<< Start Training >>>>")
 for step in range(epoch):
+    with writer.as_default():
+        tf.summary.trace_export(
+            name="my_func_trace",
+            step=0,
+            profiler_outdir=logdir)
     total_loss = 0.0
     num_batches = 0
     for index, (X, Y, Y_shifted) in enumerate(data_set):

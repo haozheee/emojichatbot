@@ -14,6 +14,7 @@ class Attention(tf.keras.Model):
 
     # encoder_output is batch_size * sequence_len * hidden_size
     # decoder_hidden is batch_size * hidden_size
+    @tf.function
     def call(self, encoder_output, decoder_hidden):
         decoder_hidden = tf.expand_dims(decoder_hidden, 1)  # batch_size * 1 * decoder_hidden_size
         decoder_hidden = tf.tile(decoder_hidden, multiples=[1, Dialog.max_dialog_len, 1])
@@ -43,6 +44,7 @@ class Encoder(tf.keras.Model):
         self.embedding = embedding
         self.gru_layer = tf.keras.layers.GRU(units, return_sequences=True, return_state=True)
 
+    @tf.function
     def call(self, inputs):
         embedded_data = tf.nn.embedding_lookup(self.embedding, inputs)
         encoder_output, hidden_state = self.gru_layer(embedded_data,
@@ -80,6 +82,7 @@ class Decoder(tf.keras.Model):
     # <initial_state> is the initial hidden state of decoder
     # <encoder_output> is the output from the encoder, which is batch_size * sequence_len * hidden_size
     # all these inputs are combined to determine the next prediction of word token
+    @tf.function
     def call(self, inputs, initial_state, encoder_output):
         # batch_size * enc_hidden_size -> batch_size * dec_hidden_size: embedding_dim+hidden_size
         initial_state = self.fc(initial_state)
@@ -177,7 +180,7 @@ class Decoder(tf.keras.Model):
             result = tf.cast(result[0], tf.dtypes.int32)
             output = [tf.one_hot(result, self.vocab_size, axis=-1)]  # make the output to 3 dimension
         elif self.training:
-            output = numpy.zeros(shape=[self.batch_size, 0, self.vocab_size])
+            output = None
             state = initial_state
             # select the 0th token from observations amount of batch_size
             next_input = tf.slice(inputs, begin=[0, 0], size=[-1, 1])
@@ -194,13 +197,14 @@ class Decoder(tf.keras.Model):
                 decoder_output = self.dense(decoder_output)  # batch * 1 * vocab_size
                 # print(output.shape)
                 # print(decoder_output.numpy().shape)
-                output = numpy.concatenate([output, decoder_output.numpy()], axis=1)
+                if output is None:
+                    output = decoder_output
+                else:
+                    output = tf.concat([output, decoder_output], axis=1)
                 state = decoder_hidden
                 if i + 1 in range(Dialog.max_dialog_len):
                     next_input = tf.slice(inputs, begin=[0, i+1], size=[-1, 1])
                 else:
                     break
-            epsilon = numpy.full(shape=tf.shape(output), fill_value=0.00001)
-            output = output + epsilon
-            output = tf.math.softmax(output, 2)
+            output = tf.nn.softmax(output, 2)
         return output
