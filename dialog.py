@@ -8,7 +8,7 @@ class Dialog:
     all_text = []  # used for obtaining frequency distribution
     word_id_dict = {}
     lemon = None    # it is the lemmatizer
-    read_len = 500  # -1 to read until ends
+    read_len = 700  # -1 to read until ends
     freq_dist = None
     vocab_size = 800
     contractions = {
@@ -161,8 +161,7 @@ class Dialog:
                 parts = line.split(' +++$+++ ')
                 string = str(parts[-1])
                 string = string.lower()
-                new = "TSTSTARTTST " + string + " TSTEOSTST"
-                line_pairs[parts[0]] = new
+                line_pairs[parts[0]] = string
         with open(conversation_path, "r") as conversation_file:
             for count, line in enumerate(conversation_file):
                 if count > Dialog.read_len != -1:
@@ -193,12 +192,9 @@ class Dialog:
         total = sum(list(Dialog.freq_dist.values()))
         known_rate = float(known) / float(total)        # to measure how many words are Not replaced by UNKNOWN
         print("Vocabulary Known Rate is: " + str(known_rate))
-        Dialog.all_tokens.remove('TSTEOSTST')
-        Dialog.all_tokens.remove('TSTSTARTTST')
-        Dialog.word_id_dict = {token: index + 4 for index, token in set(enumerate(Dialog.all_tokens))}
-        Dialog.word_id_dict['TSTEOSTST'] = 1
-        Dialog.word_id_dict['TSTSTARTTST'] = 2
-        Dialog.word_id_dict['TSTUNKNOWNTST'] = 3
+        Dialog.word_id_dict = {token: index + 3 for index, token in set(enumerate(Dialog.all_tokens))}
+        Dialog.word_id_dict['TSTSTARTTST'] = 1
+        Dialog.word_id_dict['TSTUNKNOWNTST'] = 2
         '''leave 0 as the empty token for padding'''
 
     @staticmethod

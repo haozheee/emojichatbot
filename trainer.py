@@ -7,22 +7,22 @@ from model import Encoder, Decoder
 
 # 1. Load Data
 print("<<<< Loading Data >>>>")
-dialog_list = Dialog.resolve_data("./data/movie_conversations.txt", "./data/movie_lines.txt", vocab_size=2500)
+dialog_list = Dialog.resolve_data("./data/movie_conversations.txt", "./data/movie_lines.txt", vocab_size=2000)
 Dialog.load_word2ids()
 dialog_x, dialog_y = Dialog.pair_qa_ids(dialog_list)
 data_X = tf.data.Dataset.from_tensor_slices(dialog_x)
 data_Y = tf.data.Dataset.from_tensor_slices(dialog_y)
-data_Y_shifted = data_Y.map(lambda sentence: tf.concat([tf.constant([Dialog.word2id("")]), sentence[:-1]], 0))
+data_Y_shifted = data_Y.map(lambda sentence: tf.concat([tf.constant([Dialog.word2id("TSTSTARTTST")]), sentence[:-1]], 0))
 print("Amount of observations: " + str(len(dialog_x)))
 
 # 2. Specify Deep Learning Parameters
 print("<<<< Specifying Hyper Parameters >>>>")
 # the data should not change the parameters significantly, so we are not saving it locally
 embedding_dim = 32
-vocab_size = len(Dialog.all_tokens) + 4
+vocab_size = len(Dialog.all_tokens) + 2
 sequence_len = Dialog.max_dialog_len
 batch_size = 32
-hidden_units = 64
+encoder_hidden_size = 64
 epoch = 3000
 save_interval = 10
 learning_rate = 0.005
@@ -57,10 +57,11 @@ if embedding is None or len(embedding) < vocab_size:
     print("Rebuild Embedding")
     embedding = tf.random.normal(shape=[vocab_size, embedding_dim])
     write_table(embedding.numpy(), "random_embedding.csv")
-encoder = Encoder(batch_size=batch_size, units=hidden_units, embedding=embedding)
+encoder = Encoder(batch_size=batch_size, units=encoder_hidden_size, embedding=embedding)
 # <encoder_output> dimension: [batch_size, sequence_len, encoder_units]; These are useless
 # <encoder_hidden> dimension: [batch_size, encoder_units]; This is the THOUGHT VECTOR
-decoder = Decoder(batch_size=batch_size, units=hidden_units, embedding=embedding, vocab_size=vocab_size)
+decoder = Decoder(batch_size=batch_size, encoder_hidden_size=encoder_hidden_size,
+                  embedding_dim=embedding_dim,embedding=embedding, vocab_size=vocab_size)
 # <decoder_output> dimension: [batch_size, sequence_len, encoder_units]
 # <decoder_hidden> dimension: [batch_size, encoder_units]
 optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
@@ -77,13 +78,18 @@ def train(encoder_input, decoder_input, decoder_target):
     loss = 0.0
     with tf.GradientTape() as tape:
         enc_output, enc_hidden = encoder(inputs=encoder_input)
-        decoder_predict = decoder(inputs=decoder_input, initial_state=enc_hidden)
+        decoder_predict = decoder(inputs=decoder_input, initial_state=enc_hidden, encoder_output=enc_output)
         decoder_target = tf.one_hot(decoder_target, vocab_size, axis=-1)
         decoder_predict = tf.cast(decoder_predict, tf.dtypes.float32)
+        print("Target:  ")
+        print(decoder_target)
+        print("Predict:  ")
+        print(decoder_predict)
         decoder_target = tf.cast(decoder_target, tf.dtypes.float32)
         loss += cross_entropy(y_true=decoder_target, y_pred=decoder_predict)
+        print(loss)
         # print("... batch cross entropy loss: " + str(loss.numpy()))
-        variables = encoder.trainable_variables + decoder.trainable_variables
+        variables = encoder.trainable_variables + decoder.trainable_variables + decoder.attention.trainable_variables
         gradients = tape.gradient(loss, variables)
         optimizer.apply_gradients(zip(gradients, variables))
     return loss.numpy()
@@ -123,7 +129,7 @@ for step in range(epoch):
     data_set = tf.data.Dataset.zip((data_X, data_Y, data_Y_shifted))
     data_set = data_set.shuffle(buffer_size=len(dialog_x)).batch(batch_size, drop_remainder=True)
     print("Step: " + str(step) + ", Total Loss: " + str(total_loss))
-    print("--- Me: [ What's your name? ]")
+    print("--- Me: How are you doing, my dear?")
     print("--- Computer: " + predict("How are you doing, my dear?"))
     if step % save_interval == 0:
         encoder.save_weights('encoder_weights_saving')

@@ -4,16 +4,33 @@ import tensorflow as tf
 from dialog import Dialog
 
 
-class BeamTreeNode:
-    probability = 0.0
-    word_id = 0
-    first = None;
-    second = None;
-    third = None;
+class Attention(tf.keras.Model):
+    def compute_output_signature(self, input_signature):
+        pass
 
-    def __init__(self, probability, word_id):
-        self.probability = probability
-        self.word_id = word_id
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dense = tf.keras.layers.Dense(1)
+
+    # encoder_output is batch_size * sequence_len * hidden_size
+    # decoder_hidden is batch_size * hidden_size
+    def call(self, encoder_output, decoder_hidden):
+        decoder_hidden = tf.expand_dims(decoder_hidden, 1)  # batch_size * 1 * decoder_hidden_size
+        decoder_hidden = tf.tile(decoder_hidden, multiples=[1, Dialog.max_dialog_len, 1])
+        concat_hidden = tf.concat([encoder_output, decoder_hidden], axis=2)  # batch_size * sequence_len * 2hidden_size
+        score = self.dense(concat_hidden)  # batch_size * sequence_len * 1
+        score = tf.squeeze(score) # batch_size * sequence_len
+        score = tf.math.softmax(score)
+        # print("Score is: ")
+        # print(score)
+        alignment = tf.einsum("ijk,ij->ijk", encoder_output, score)
+        # print("Alignment Vector is: ")  # batch_size * sequence_len * hidden_size
+        # print(alignment)
+        context_vector = tf.einsum("ijk->ik", alignment)
+        context_vector = tf.expand_dims(context_vector, 1)
+        # print("Context Vector is :")
+        # print(context_vector)
+        return context_vector  # batch_size * 1 * hidden_size
 
 class Encoder(tf.keras.Model):
     def compute_output_signature(self, input_signature):
@@ -30,8 +47,13 @@ class Encoder(tf.keras.Model):
         embedded_data = tf.nn.embedding_lookup(self.embedding, inputs)
         encoder_output, hidden_state = self.gru_layer(embedded_data,
                                                       initial_state=tf.zeros((self.batch_size, self.units)))
+        # encoder hidden state is : batch_size * hidden_unit
         # <encoder_output> dimension: [batch_size, sequence_len, encoder_units]
         # <encoder_hidden> dimension: [batch_size, encoder_units]
+        # print("Encoder Output:")
+        # print(encoder_output)
+        # print("Encoder Hidden:")
+        # print(hidden_state)
         return encoder_output, hidden_state
 
 
@@ -39,29 +61,37 @@ class Decoder(tf.keras.Model):
     def compute_output_signature(self, input_signature):
         pass
 
-    def __init__(self, batch_size, units, embedding, vocab_size, training=True, *args, **kwargs):
+    def __init__(self, batch_size, embedding, vocab_size, encoder_hidden_size, embedding_dim, training=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.batch_size = batch_size
-        self.units = units
+        self.encoder_hidden_size = encoder_hidden_size
+        self.embedding_dim = embedding_dim
         self.embedding = embedding
-        self.gru_layer = tf.keras.layers.GRU(units, return_sequences=True, return_state=True)
+        self.gru_layer = tf.keras.layers.GRU(encoder_hidden_size + embedding_dim, return_sequences=True, return_state=True)
         self.dense = tf.keras.layers.Dense(vocab_size)
+        # maps encoder_hidden_size to decoder_hidden_size: (embedding_dim+hidden_size)
+        self.fc = tf.keras.layers.Dense(encoder_hidden_size + embedding_dim)
         self.vocab_size = vocab_size
         self.training = training
+        self.attention = Attention()
         self.mode = "greedy"
 
-    # <decoder_input>
-    # <decoder_hidden> is the last hidden state, carrying information from the last word to the current prediction
-    # <encoder_hidden> is the Thought Vector that carries the entire information of the question sentence
+    # <inputs> is the input matrix of word ids to the decoder, which is batch_size * sequence_len
+    # <initial_state> is the initial hidden state of decoder
+    # <encoder_output> is the output from the encoder, which is batch_size * sequence_len * hidden_size
     # all these inputs are combined to determine the next prediction of word token
-    def call(self, inputs, initial_state):
+    def call(self, inputs, initial_state, encoder_output):
+        # batch_size * enc_hidden_size -> batch_size * dec_hidden_size: embedding_dim+hidden_size
+        initial_state = self.fc(initial_state)
         if not self.training and self.mode == "greedy":  # greedy algorithm for prediction
-            inputs = numpy.asarray([[Dialog.word2id("")]])
+            next_input = numpy.asarray([[Dialog.word2id("TSTSTARTTST")]])
             result = numpy.asarray([[]])
             state = initial_state
-            for i in range(Dialog.max_dialog_len) and inputs != numpy.asarray([[0], [0], [0]]):
-                embedded_data = tf.nn.embedding_lookup(self.embedding, inputs)
-                decoder_output, decoder_hidden = self.gru_layer(embedded_data,
+            for i in range(Dialog.max_dialog_len) and next_input != numpy.asarray([[0], [0], [0]]):
+                embedded_data = tf.nn.embedding_lookup(self.embedding, next_input)  # batch * 1 * embedding_dim
+                context_vec = self.attention(encoder_output, state)
+                concat_input = tf.concat(embedded_data, context_vec, 2) #batch * 1 * (embedding_dim+enc_hidden_size)
+                decoder_output, decoder_hidden = self.gru_layer(concat_input,
                                                                 initial_state=state)
                 decoder_output = self.dense(decoder_output)  # maps the V[unit_size] to V[vocab_size]
                 output_word_id = tf.math.argmax(decoder_output, axis=2)
@@ -73,7 +103,7 @@ class Decoder(tf.keras.Model):
                 # print(inputs)
                 # print("Decoder Prediction New")
                 # print(output_word_id)
-                inputs = output_word_id
+                next_input = output_word_id
                 result = numpy.append(result, output_word_id)
                 state = decoder_hidden
             result = tf.cast(result, tf.dtypes.int32)
@@ -145,13 +175,32 @@ class Decoder(tf.keras.Model):
                 result = numpy.append(adjusted_result, new_tokens, axis=1)
                 state = adjusted_hidden
             result = tf.cast(result[0], tf.dtypes.int32)
-            output = [tf.one_hot(result, self.vocab_size, axis=-1)]    # make the output to 3 dimension
-        else:
-            embedded_data = tf.nn.embedding_lookup(self.embedding, inputs)
-            decoder_output, decoder_hidden = self.gru_layer(embedded_data,
-                                                            initial_state=initial_state)
-            output = self.dense(decoder_output)
+            output = [tf.one_hot(result, self.vocab_size, axis=-1)]  # make the output to 3 dimension
+        elif self.training:
+            output = numpy.zeros(shape=[self.batch_size, 0, self.vocab_size])
+            state = initial_state
+            # select the 0th token from observations amount of batch_size
+            next_input = tf.slice(inputs, begin=[0, 0], size=[-1, 1])
+            for i in range(Dialog.max_dialog_len):
+                embedded_data = tf.nn.embedding_lookup(self.embedding, next_input)  # batch * 1 * embedding_dim
+                context_vec = self.attention(encoder_output, state)
+                # print(embedded_data)
+                # print(context_vec)
+                concat_input = tf.concat([embedded_data, context_vec], 2)  # batch * 1 * (embedding_dim+enc_hidden_size)
+                # print(tf.shape(concat_input))
+                # print(tf.shape(state))
+                decoder_output, decoder_hidden = self.gru_layer(inputs=concat_input,   # batch * 1 * (embedding_dim+enc_hidden_size)
+                                                                initial_state=state) # batch * (embedding_dim+enc_hidden_size)
+                decoder_output = self.dense(decoder_output)  # batch * 1 * vocab_size
+                # print(output.shape)
+                # print(decoder_output.numpy().shape)
+                output = numpy.concatenate([output, decoder_output.numpy()], axis=1)
+                state = decoder_hidden
+                if i + 1 in range(Dialog.max_dialog_len):
+                    next_input = tf.slice(inputs, begin=[0, i+1], size=[-1, 1])
+                else:
+                    break
             epsilon = numpy.full(shape=tf.shape(output), fill_value=0.00001)
             output = output + epsilon
-            output = tf.nn.softmax(output, 2)
+            output = tf.math.softmax(output, 2)
         return output
